@@ -3,13 +3,16 @@
 from collections import defaultdict, deque
 import numpy as np
 from abc import ABC
-from utils import clear_screen
 import time
 np.set_printoptions(precision=3, linewidth=200)
 
 from tqdm import trange
 from copy import deepcopy
 
+from IPython.display import clear_output
+def clear_screen():
+    print(chr(27) + "[2J")
+    clear_output()
 
 # ========================== #
 # ========= Agents ========= #
