@@ -13,8 +13,10 @@ class MouselabEnv(gym.Env):
     """MetaMDP for a tree with a discrete unobserved reward function."""
     metadata = {'render.modes': ['human', 'array']}
     term_state = '__term_state__'
-    def __init__(self, branch=2, height=2, reward=None, cost=0, ground_truth=None):
+    def __init__(self, branch=2, height=2, reward=None, cost=0, ground_truth=None,
+                 simple_features=False):
         self.branch = branch
+        self.simple_features = simple_features
         if hasattr(self.branch, '__len__'):
             self.height = len(self.branch)
         else:
@@ -43,7 +45,7 @@ class MouselabEnv(gym.Env):
                 # self.init = (0, *(self.reward.copy() for _ in range(len(self.tree) - 1)))
             # else:u
                 # self.init = reward
-
+        self.paths = list(self.get_paths())
         self.sample_term_reward = False
         self.action_space = spaces.Discrete(len(self.tree) + 1)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(len(self.tree),))
@@ -55,7 +57,7 @@ class MouselabEnv(gym.Env):
     def reset(self):
         self._state = self.init
         return self.features(self._state)
-        
+
     def step(self,action):
         return self._step(action)
 
@@ -141,22 +143,38 @@ class MouselabEnv(gym.Env):
         # nqpi_mu, nqpi_sigma = norm.fit(self.node_quality(action).sample(10000))
         # return np.r_[1, nq_mu, nq_sigma, nqpi_mu, nqpi_sigma, 0, 0]
 
-        if action == self.term_action:
-            return np.array([
-                0,
-                0,
-                0,
-                0,
-                self.expected_term_reward(state)
-            ])
-
-        return np.array([
-            self.cost,
-            self.myopic_voc(action, state),
-            self.vpi_action(action, state),
-            self.vpi(state),
-            self.expected_term_reward(state)
-        ])
+        if self.simple_features:
+            if action == self.term_action:
+                return np.array([
+                    1,
+                    0,
+                    0,
+                    self.expected_term_reward(state)
+                ])
+            else:
+                return np.array([
+                    0,
+                    self.cost,
+                    self.myopic_voc(action, state),
+                    self.expected_term_reward(state)
+                ])
+        else:
+            if action == self.term_action:
+                return np.array([
+                    0,
+                    0,
+                    0,
+                    0,
+                    self.expected_term_reward(state)
+                ])
+            else:
+                return np.array([
+                    self.cost,
+                    self.myopic_voc(action, state),
+                    self.vpi_action(action, state),
+                    self.vpi(state),
+                    self.expected_term_reward(state)
+                ])
 
 
 
@@ -175,7 +193,10 @@ class MouselabEnv(gym.Env):
 
     @lru_cache(CACHE_SIZE)
     def expected_term_reward(self, state):
-        return self.term_reward(state).expectation()
+        print('run')
+        s1 = tuple(map(expectation, state))
+        return max(sum(s1[n] for n in path) for path in self.paths)
+        # return self.term_reward(state).expectation()
 
     def node_value(self, node, state=None):
         """A distribution over total rewards after the given node."""
@@ -257,7 +278,7 @@ class MouselabEnv(gym.Env):
                 path.append(child)
         assert False
 
-    def all_paths(self, start=0):
+    def get_paths(self, start=0):
         def rec(path):
             children = self.tree[path[-1]]
             if children:
@@ -283,6 +304,9 @@ class MouselabEnv(gym.Env):
             for n1 in self.tree[n]:
                 yield from gen(n1)
         return [tuple(gen(n)) for n in range(len(self.tree))]
+
+
+
 
 
     def _build_tree(self):
@@ -385,7 +409,7 @@ def flat_node_value_after_observe(obs_flat):
                  flat_node_value_after_observe(obs_flat[c2:]) + obs_flat[c2]))
 
 
-@lru_cache(None)
+@lru_cache(SMALL_CACHE_SIZE)
 def exact_node_value_after_observe(obs_tree):
     """A distribution over the expected value of node, after making an observation.
 
@@ -403,11 +427,11 @@ def exact_node_value_after_observe(obs_tree):
 #     children = tuple(node_value_after_observe(c) + c[0] for c in obs_tree[1])
 #     return smax(children, default=PointMass(0))
 
-from toolz import memoize
+# from toolz import memoize
 
-@memoize(key=lambda args, kwargs: len(args[0]))
-def tree_max(obs_flat):
-    c1 = 1
-    c2 = len(obs_flat) // 2 + 1
-    return smax((flat_node_value_after_observe(obs_flat[c1:c2]) + obs_flat[c1],
-                 flat_node_value_after_observe(obs_flat[c2:]) + obs_flat[c2]))
+# @memoize(key=lambda args, kwargs: len(args[0]))
+# def tree_max(obs_flat):
+#     c1 = 1
+#     c2 = len(obs_flat) // 2 + 1
+#     return smax((flat_node_value_after_observe(obs_flat[c1:c2]) + obs_flat[c1],
+#                  flat_node_value_after_observe(obs_flat[c2:]) + obs_flat[c2]))

@@ -73,16 +73,17 @@ from collections import deque
 
 class BayesianQLearner(Policy,):
     """Learns a linear Q function by Bayesian regression."""
-    def __init__(self, n_feature, sample_weights=True, mem_size=1000, prior_params=None, **kwargs):
+    def __init__(self, n_feature, prior_params, sample_weights=True, mem_size=1000, **kwargs):
         super().__init__(**kwargs)
-        assert n_feature == 5
-        if prior_params is None:
-            prior_params = np.r_[np.zeros(4) , 1, np.ones(4)*0.1, 100, 10,1]
-        self.Q = BayesianRegression(5,
-            prior_mean = prior_params[:5],
-            prior_precision = prior_params[5:10],
-            prior_a = prior_params[10],
-            prior_b = prior_params[11]
+        # assert n_feature == 5
+        # if prior_params is None:
+            # prior_params = np.r_[np.zeros(4) , 1, np.ones(4)*0.1, 100, 10,1]
+        k = n_feature
+        self.Q = BayesianRegression(k,
+            prior_mean = prior_params[:k],
+            prior_precision = prior_params[k:k*2],
+            prior_a = prior_params[k*2],
+            prior_b = prior_params[k*2+1]
         )
         self.data = {
             'phis': deque(maxlen=mem_size),
