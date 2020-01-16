@@ -5,6 +5,7 @@ from functools import lru_cache
 from gym import spaces
 import itertools as it
 from distributions import *
+import erdos_renyi
 
 CACHE_SIZE = int(2**18)
 SMALL_CACHE_SIZE = int(2**16)
@@ -13,28 +14,26 @@ class MouselabEnv(gym.Env):
     """MetaMDP for a tree with a discrete unobserved reward function."""
     metadata = {'render.modes': ['human', 'array']}
     term_state = '__term_state__'
-    def __init__(self, branch=2, height=2, reward=None, cost=0, ground_truth=None,
+    def __init__(self, tree, reward, cost=0, ground_truth=None,
                  simple_features=False):
-        self.branch = branch
-        self.simple_features = simple_features
-        if hasattr(self.branch, '__len__'):
-            self.height = len(self.branch)
-        else:
-            self.height = height
-            self.branch = [self.branch] * self.height
-
-        if hasattr(reward, 'sample'):
-            self.reward = reward if reward is not None else Normal(1, 1)
-            self.iid_rewards = True
-        else:
-            self.iid_rewards = False
-        self.cost = - abs(cost)
+        # self.branch = branch
+        # if hasattr(self.branch, '__len__'):
+        #     self.height = len(self.branch)
+        # else:
+        #     self.height = height
+        #     self.branch = [self.branch] * self.height
+        self.tree = tree
+        self.reward = reward
+        self.cost = -abs(cost)
         self.ground_truth = np.array(ground_truth) if ground_truth is not None else None
-        self.tree = self._build_tree()
+        self.simple_features = simple_features
+
+        # self.iid_rewards = hasattr(reward, 'sample')
+        # self.tree = self._build_tree()
 
         self.exact = hasattr(reward, 'vals')
         if self.exact:
-            assert self.iid_rewards
+            # assert self.iid_rewards
             self.max = cmax
             self.init = (0, *(self.reward,) * (len(self.tree) - 1))
         else:
@@ -193,7 +192,6 @@ class MouselabEnv(gym.Env):
 
     @lru_cache(CACHE_SIZE)
     def expected_term_reward(self, state):
-        print('run')
         s1 = tuple(map(expectation, state))
         return max(sum(s1[n] for n in path) for path in self.paths)
         # return self.term_reward(state).expectation()
@@ -306,32 +304,65 @@ class MouselabEnv(gym.Env):
         return [tuple(gen(n)) for n in range(len(self.tree))]
 
 
+    @classmethod
+    def new_symmetric(cls, branching, reward, seed=None, **kwargs):
+        """Returns a MouselabEnv with a symmetric structure."""
+        raise NotImplementedError("TODO")
+
+        if seed is not None:
+            np.random.seed(seed)
+        if not callable(reward):
+            r = reward
+            reward = lambda depth: r
+
+        init = []
+        tree = []
+
+        def expand(d):
+            my_idx = len(init)
+            init.append(reward(d))
+            children = []
+            tree.append(children)
+            for _ in range(get(d, branching, 0)):
+                child_idx = expand(d+1)
+                children.append(child_idx)
+            return my_idx
+
+        expand(0)
+        return cls(tree, init, **kwargs)
+
+    @classmethod
+    def new_erdos_renyi(cls, N, reward, p=0.3, **kwargs):
+        tree = erdos_renyi.sample_tree(N, p)
+        return cls(tree, reward, **kwargs)
 
 
 
-    def _build_tree(self):
-        # num_node = np.cumsum(self.branch).sum() + 1
-        def nodes_per_layer():
-            n = 1
-            yield n
-            for b in self.branch:
-                n *= b
-                yield n
 
-        num_node = sum(nodes_per_layer())
-        T = [[] for _ in range(num_node)]  # T[i] = [c1, c2, ...] or [] if i is terminal
 
-        ids = it.count(0)
-        def expand(i, d):
-            if d == self.height:
-                return
-            for _ in range(self.branch[d]):
-                next_i = next(ids)
-                T[i].append(next_i)
-                expand(next_i, d+1)
+    # def _build_tree(self):
+    #     # num_node = np.cumsum(self.branch).sum() + 1
+    #     def nodes_per_layer():
+    #         n = 1
+    #         yield n
+    #         for b in self.branch:
+    #             n *= b
+    #             yield n
 
-        expand(next(ids), 0)
-        return tuple(map(tuple, T))
+    #     num_node = sum(nodes_per_layer())
+    #     T = [[] for _ in range(num_node)]  # T[i] = [c1, c2, ...] or [] if i is terminal
+
+    #     ids = it.count(0)
+    #     def expand(i, d):
+    #         if d == self.height:
+    #             return
+    #         for _ in range(self.branch[d]):
+    #             next_i = next(ids)
+    #             T[i].append(next_i)
+    #             expand(next_i, d+1)
+
+    #     expand(next(ids), 0)
+    #     return tuple(map(tuple, T))
 
     def _render(self, mode='notebook', close=False):
         if close:

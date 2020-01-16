@@ -5,7 +5,7 @@ import pandas as pd
 # Prevents annoying crash
 import matplotlib; matplotlib.use('agg')
 
-from skopt import gp_minimize
+from skopt import gp_minimize, expected_minimum
 from skopt.space import Real,Space
 from joblib import Parallel, delayed, load, dump
 
@@ -16,12 +16,12 @@ from gymrats.core import Agent
 from exact import solve
 
 
-cost_range = [0,0.3]
+cost_range = [0,0.2]
 branch_range = [2,4]
 height_range = [2,4]
 reward_alpha = 1
 
-N_FEATURE = 4
+N_FEATURE = 5
 if N_FEATURE == 5:
     DIMENSIONS = [Real(1, 20), Real(0,1), Real(0,1), Real(0,1), Real(0,2)]
 else:
@@ -32,8 +32,13 @@ def sample_env():
     cost = np.random.uniform(*cost_range)
     branch = np.random.randint(*branch_range)
     height = np.random.randint(*height_range)
-    R = Categorical([-1, 0, 1],np.random.dirichlet(np.ones(3)*reward_alpha))
-    env = MouselabEnv(branch, height, reward=R, cost=cost)
+
+    p = np.random.uniform(.1, .9)
+    x = (1-p) / p
+    R = Categorical([-1, x], [(1-p), p])
+    # R = Categorical([-1, 0, 1],np.random.dirichlet(np.ones(3)*reward_alpha))
+
+    env = MouselabEnv.new_erdos_renyi(30, reward=R, cost=cost)
     if N_FEATURE == 4:
         env.simple_features = True
     return env
@@ -80,31 +85,50 @@ def train_agent(kind, n_iter=200, n_env=100, n_episode=25, **kwargs):
     dimensions = list(DIMENSIONS)
     if kind == 'meta':
         dimensions.extend([Real(0.1,100)]*N_FEATURE + [Real(0.1,20), Real(0.1,10)])
-    print(len(dimensions))
 
     objective = make_objective(training_return, N=n_env, n_episode=n_episode)
     return gp_minimize(lambda x: - objective(x),
-                       dimensions=dimensions, n_calls=n_iter, **kwargs)
+                       dimensions=dimensions, n_calls=n_iter,
+                        **kwargs)
 
 
 # %% ====================  ====================
-global_x = load('pickle/global_x')
-np.random.seed(1)
-random.seed(1)
-env = sample_env()
-print(env.reward)
-%time make_objective(training_return, N=10, n_episode=25, parallel=False)(global_x)
 
-# %% ====================  ====================
-# meta_res = train_agent('meta')
-global_res = train_agent('global', n_env=5000, n_episode=1)
+def expand_x(x):
+    return [x[0], 1, x[1], 1]
+
+def optimize_global(N=5000, parallel=True):
+    objective = make_objective(training_return, N=N, n_episode=1, parallel=parallel)
+
+    dimensions = [Real(-1., 1.), Real(0., 2.)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = gp_minimize(lambda x: -objective(expand_x(x)), dimensions=dimensions, n_calls=100, n_random_starts=25)
+    return res
+
+
+global_res = optimize_global(5000)
 
 objective = make_objective(training_return, N=5000, n_episode=1)
-print(objective(global_res.x))
-print(objective(x_greedy))
+objective(expand_x(global_res.x))
+objective(expand_x(x_greedy))
+objective(expand_x(expected_minimum(global_res)))
+global_x = global_res.x
+dump('pickle/global_x_4')
 
-x_greedy = [0, 1, 1, 0]
-global_x = x_greedy
+# %% ====================  ====================
+meta_res = train_agent('meta', n_episode=40, n_env=1000, n_random_starts=50)
+print("GLOBAL")
+global_res = train_agent('global', n_episode=40, n_env=1000, n_random_starts=50)
+
+objective = make_objective(training_return, N=1000, n_episode=40)
+
+objective(global_res.x)
+objective(expected_minimum(global_res)[0])
+objective(meta_res.x)
+objective(expected_minimum(meta_res)[0])
+
+# meta_x = expected_minimum(meta_res)[0]
 
 
 # %% ====================  ====================
@@ -133,7 +157,8 @@ dump(meta_curves, 'pickle/meta_curves4')
 dump(global_curves, 'pickle/global_curves4')
 
 # %% ==================== Find environments for which global solution is suboptimal  ====================
-
+x_greedy = [0, 1, 1, 0]
+global_x =
 
 def select_envs(n):
     envs = []
@@ -158,10 +183,6 @@ def eval_fixed_env(x, env, N, parallel=False):
         return Parallel(-1, backend='multiprocessing')(jobs)
     else:
         return [training_return(x, env=env, seed=np.random.randint(1e8), n_episode=1) for i in range(N)]
-
-
-def expand_x(x):
-    return [x[0], 1, x[1], 1]
 
 import warnings
 def optimize_env(env, N=1000, parallel=False, verbose=False):
